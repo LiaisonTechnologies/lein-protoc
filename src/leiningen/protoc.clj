@@ -2,13 +2,13 @@
   "Leiningen plugin for compiling Google Protocol Buffers"
   (:require [cemerick.pomegranate.aether :as aether]
             [clojure.java.io :as io]
-            [clojure.spec.alpha :as spec]
             [leiningen.core.main :as main]
             [leiningen.core.utils]
             [leiningen.core.classpath :as classpath]
             [leiningen.javac]
             [robert.hooke :as hooke]
-            [clojure.string :as string])
+            [clojure.string :as string]
+            [clojure.set :as set])
   (:import [java.io File]
            [java.net URI]
            [java.nio.file
@@ -100,19 +100,19 @@
   [{:keys [protoc-exe protoc-grpc-exe]}
    {:keys [proto-source-paths builtin-proto-path proto-dep-paths]}
    {:keys [proto-target-path grpc-target-path]}]
-  (let [all-srcs        (concat proto-dep-paths (if builtin-proto-path
-                                                  (conj proto-source-paths builtin-proto-path)
-                                                  proto-source-paths))
-        src-paths-args  (map str->src-path-arg all-srcs)
+  (let [all-srcs (concat proto-dep-paths (if builtin-proto-path
+                                           (conj proto-source-paths builtin-proto-path)
+                                           proto-source-paths))
+        src-paths-args (map str->src-path-arg all-srcs)
         target-path-arg (str "--java_out="
                              (resolve-target-path! proto-target-path))
         grpc-plugin-arg (when protoc-grpc-exe
                           (str "--plugin=protoc-gen-grpc-java="
                                protoc-grpc-exe))
-        grpc-path-arg   (when protoc-grpc-exe
-                          (str "--grpc-java_out="
-                               (resolve-target-path! grpc-target-path)))
-        proto-files     (mapcat proto-files proto-source-paths)]
+        grpc-path-arg (when protoc-grpc-exe
+                        (str "--grpc-java_out="
+                             (resolve-target-path! grpc-target-path)))
+        proto-files (mapcat proto-files proto-source-paths)]
     (when (and (not-empty proto-files)
                (outdated-protos? proto-source-paths proto-target-path))
       (main/info "Compiling" (count proto-files) "proto files:" proto-files)
@@ -195,10 +195,10 @@
   "Resolves the Google Protocol Buffers code generation artifact+version in the
   local maven repository if it exists or downloads from Maven Central"
   [artifact protoc-version]
-  (let [classifier  (str (get-os) "-" (get-arch))
-        version     (if (= :latest protoc-version)
-                      (latest-version artifact)
-                      protoc-version)
+  (let [classifier (str (get-os) "-" (get-arch))
+        version (if (= :latest protoc-version)
+                  (latest-version artifact)
+                  protoc-version)
         coordinates [artifact version :classifier classifier :extension "exe"]]
     (aether/resolve-artifacts :coordinates [coordinates])
     coordinates))
@@ -304,34 +304,42 @@
            "the classpath so any Google standard proto files will not "
            "be available to imports in source protos."))))
 
-;;
-;; Options Validation and Parsing
-;;
+(defn validate-version
+  [version key]
+  (when-not (or (nil? version)
+                (string? version)
+                (= :latest version))
+    (format ":%s value must be a valid version string or the keyword :latest" key)))
 
-(spec/def :protoc/version
-  (spec/nilable (spec/or :string string?
-                         :latest #{:latest})))
+(defn validate-source-paths
+  [source-paths]
+  (when-not (or (nil? source-paths)
+                (and (coll? source-paths)
+                     (every? string? source-paths)))
+    ":proto-source-paths value must be a collection of valid filepath strings"))
 
-(spec/def :protoc/source-paths
-  (spec/nilable (spec/coll-of string?)))
+(defn validate-target-path
+  [target-path key]
+  (when-not (or (nil? target-path)
+                (string? target-path))
+    (format ":%s value must be a valid filepath string" key)))
 
-(spec/def :protoc/target-path
-  (spec/nilable string?))
+(defn validate-grpc
+  [grpc]
+  (when-not (nil? grpc)
+    (if (or (true? grpc)
+            (false? grpc)
+            (and (map? grpc)
+                 (set/subset? (set (keys grpc)) #{:version :target-path})))
+      (first (keep identity [(validate-version (:version grpc) ":protoc-grpc.version")
+                             (validate-target-path (:target-path grpc) ":protoc-grpc.target-path")]))
+      ":protoc-grpc value must be either a boolean or a map with optional keys :version and :target-path")))
 
-(spec/def :protoc/grpc
-  (spec/nilable
-    (spec/or :bool #(instance? Boolean %)
-             :map  (spec/keys
-                     :opt-un [:protoc/version
-                              :protoc/target-path]))))
-
-(spec/def :protoc/timeout
-  (spec/nilable integer?))
-
-(defn explain
-  [spec x]
-  (when (not (spec/valid? spec x))
-    (spec/explain-str spec x)))
+(defn validate-timeout
+  [timeout]
+  (when-not (or (nil? timeout)
+                (integer? timeout))
+    ":protoc-timeout value must be an integer"))
 
 (defn validate
   "Validates the input arguments and returns a vector of error messages"
@@ -340,11 +348,11 @@
            proto-source-paths
            proto-target-path
            protoc-timeout]}]
-  (let [v-err (explain :protoc/version protoc-version)
-        g-err (explain :protoc/grpc protoc-grpc)
-        s-err (explain :protoc/source-paths proto-source-paths)
-        t-err (explain :protoc/target-path proto-target-path)
-        o-err (explain :protoc/timeout protoc-timeout)]
+  (let [v-err (validate-version protoc-version "protoc-version")
+        g-err (validate-grpc protoc-grpc)
+        s-err (validate-source-paths proto-source-paths)
+        t-err (validate-target-path proto-target-path "proto-target-path")
+        o-err (validate-timeout protoc-timeout)]
     (remove nil? [v-err g-err s-err t-err o-err])))
 
 (defn compiler-details

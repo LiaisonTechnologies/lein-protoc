@@ -2,7 +2,7 @@
   "Leiningen plugin for compiling Google Protocol Buffers"
   (:require [cemerick.pomegranate.aether :as aether]
             [clojure.java.io :as io]
-            [clojure.spec :as spec]
+            [clojure.spec.alpha :as spec]
             [leiningen.core.main :as main]
             [leiningen.core.utils]
             [leiningen.core.classpath :as classpath]

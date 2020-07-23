@@ -98,7 +98,7 @@
 
 (defn build-cmd
   [{:keys [protoc-exe protoc-grpc-exe]}
-   {:keys [proto-source-paths builtin-proto-path proto-dep-paths]}
+   {:keys [proto-source-paths builtin-proto-path proto-dep-paths proto-import-paths]}
    {:keys [proto-target-path grpc-target-path]}]
   (let [all-srcs        (concat proto-dep-paths (if builtin-proto-path
                                                   (conj proto-source-paths builtin-proto-path)
@@ -112,11 +112,13 @@
         grpc-path-arg   (when protoc-grpc-exe
                           (str "--grpc-java_out="
                                (resolve-target-path! grpc-target-path)))
-        proto-files     (mapcat proto-files proto-source-paths)]
+        proto-files     (mapcat proto-files proto-source-paths)
+        import-args     (when proto-import-paths (map #(str "-I" %) proto-import-paths))]
     (when (and (not-empty proto-files)
                (outdated-protos? proto-source-paths proto-target-path))
       (main/info "Compiling" (count proto-files) "proto files:" proto-files)
       (->> (concat [protoc-exe target-path-arg grpc-plugin-arg grpc-path-arg]
+                   import-args
                    src-paths-args
                    proto-files)
            (remove nil?)
@@ -367,14 +369,16 @@
   (mapv #(paths-for-dep % project) proto-source-deps))
 
 (defn all-source-paths
-  [{:keys [proto-source-paths] :as project}]
+  [{:keys [proto-source-paths proto-import-paths] :as project}]
   {:proto-source-paths
    (mapv (partial qualify-path project)
          (or proto-source-paths +proto-source-paths-default+))
    :proto-dep-paths
    (dep-source-paths project)
    :builtin-proto-path
-   (resolve-builtin-proto! project)})
+   (resolve-builtin-proto! project)
+   :proto-import-paths (mapv (partial qualify-path project)
+                       proto-import-paths)})
 
 (defn all-target-paths
   [{:keys [proto-target-path protoc-grpc] :as project}]
